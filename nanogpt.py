@@ -4,14 +4,14 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 batch_size = 64  # size of parallel batches of block_size (batch_dimension)
-block_size = 128  # size of the chunk of data we process (time_dimension)
+block_size = 256  # size of the chunk of data we process (time_dimension)
 max_iter = 5000
 eval_interval = 500
 learning_rate = 3e-4
 eval_iter = 200
-n_embd = 128
-n_layer = 4
-head_size = 4
+n_embd = 384
+n_layer = 6
+n_head = 6
 dropout = 0.2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(device)
@@ -63,7 +63,7 @@ def estimate_loss():
 
 class Head(nn.Module):
     """Self-attention head module."""
-    def __init__(self, n_embd, head_size, block_size, dropout) -> None:
+    def __init__(self, head_size) -> None:
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
@@ -89,10 +89,10 @@ class Head(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     """Multi-head attention module."""
-    def __init__(self, num_heads, n_embd, block_size, dropout) -> None:
+    def __init__(self, num_heads, head_size) -> None:
         super().__init__()
-        self.heads = nn.ModuleList([Head(n_embd, n_embd // num_heads, block_size, dropout) for _ in range(num_heads)])
-        self.proj = nn.Linear(n_embd, n_embd)
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(head_size*num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -104,7 +104,7 @@ class MultiHeadAttention(nn.Module):
 
 class FeedForward(nn.Module):
     """Feedforward module."""
-    def __init__(self, n_embd, dropout) -> None:
+    def __init__(self, n_embd) -> None:
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(n_embd, n_embd * 4),
@@ -119,11 +119,11 @@ class FeedForward(nn.Module):
 
 class Block(nn.Module):
     """Transformer block module."""
-    def __init__(self, n_embd, n_head, block_size, dropout) -> None:
+    def __init__(self, n_embd, n_head) -> None:
         super().__init__()
         head_size = n_embd // n_head
-        self.sa_heads = MultiHeadAttention(n_head, n_embd, block_size, dropout)
-        self.network = FeedForward(n_embd, dropout)
+        self.sa_heads = MultiHeadAttention(n_head, head_size)
+        self.network = FeedForward(n_embd)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
@@ -135,7 +135,7 @@ class Block(nn.Module):
 
 class BigramModel(nn.Module):
     """Bigram language model with optimizations."""
-    def __init__(self, vocab_size,):
+    def __init__(self,):
         super().__init__()
 
         # Embedding layers
@@ -143,7 +143,7 @@ class BigramModel(nn.Module):
         self.positional_embedding_table = nn.Embedding(block_size, n_embd)
 
         # Transformer blocks
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=head_size) for _ in range(n_layer)])
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
 
         # Layer normalization for the final output
         self.ln_f = nn.LayerNorm(n_embd)
@@ -158,7 +158,7 @@ class BigramModel(nn.Module):
 
         # Token and positional embeddings
         token_embd = self.token_embedding_table(idx)
-        pos_embd = self.positional_embedding_table(torch.arange(T, device=self.device))
+        pos_embd = self.positional_embedding_table(torch.arange(T, device=device))
         x = token_embd + pos_embd
 
         # Transformer blocks
@@ -212,6 +212,7 @@ model.to(device)
 # PyTorch optimizer model AdamW
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
+# train loop
 st = time.time()
 for curr_itr in range(max_iter):
     if curr_itr % eval_interval == 0:
@@ -226,9 +227,10 @@ et = time.time()
 print('Took', (et - st) % 60, 'seconds')
 print('Final loss', loss.item())
 
+# feeding input ' '
 input_idx = torch.zeros((1, 1), dtype=torch.long, device=device)
 # generated tokens
-g_idx = model.generate(input_idx, 300)
+g_idx = model.generate(input_idx, 500)
 
 out = decode(g_idx[0].tolist())
 print(out)
